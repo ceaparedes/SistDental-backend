@@ -1,0 +1,116 @@
+// Modelo multi-tenant del MVP0.
+// tenants ─┬─ users ── usuario_tenant ── roles ──▶ permissions
+//          └─ configuración
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TenantEstado {
+  ACTIVO
+  SUSPENDIDO
+}
+
+// Un tenant es una clínica. Todo dato de negocio cuelga de un tenant.
+model Tenant {
+  id            String               @id @default(uuid()) @db.Uuid
+  nombre        String
+  slug          String               @unique
+  estado        TenantEstado         @default(ACTIVO)
+  creadoEn      DateTime             @default(now()) @map("creado_en")
+  actualizadoEn DateTime             @updatedAt @map("actualizado_en")
+  configuracion TenantConfiguracion?
+  usuarios      UsuarioTenant[]
+  roles         Role[]
+
+  @@map("tenants")
+}
+
+// Configuración 1 a 1 con el tenant.
+model TenantConfiguracion {
+  tenantId      String   @id @map("tenant_id") @db.Uuid
+  razonSocial   String?  @map("razon_social")
+  rut           String?
+  direccion     String?
+  telefono      String?
+  email         String?
+  zonaHoraria   String   @default("America/Santiago") @map("zona_horaria")
+  moneda        String   @default("CLP")
+  logoUrl       String?  @map("logo_url")
+  horario       Json?
+  actualizadoEn DateTime @updatedAt @map("actualizado_en")
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("tenant_configuracion")
+}
+
+// Usuarios globales: una persona = una cuenta, aunque trabaje en varias clínicas.
+model User {
+  id            String          @id @default(uuid()) @db.Uuid
+  email         String          @unique
+  nombre        String
+  passwordHash  String          @map("password_hash")
+  activo        Boolean         @default(true)
+  esSuperadmin  Boolean         @default(false) @map("es_superadmin")
+  creadoEn      DateTime        @default(now()) @map("creado_en")
+  actualizadoEn DateTime        @updatedAt @map("actualizado_en")
+  tenants       UsuarioTenant[]
+
+  @@map("users")
+}
+
+// Vínculo usuario-clínica, con el rol que el usuario tiene en esa clínica.
+model UsuarioTenant {
+  id       String   @id @default(uuid()) @db.Uuid
+  userId   String   @map("user_id") @db.Uuid
+  tenantId String   @map("tenant_id") @db.Uuid
+  roleId   String   @map("role_id") @db.Uuid
+  activo   Boolean  @default(true)
+  creadoEn DateTime @default(now()) @map("creado_en")
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role     Role     @relation(fields: [roleId], references: [id])
+
+  @@unique([userId, tenantId])
+  @@index([tenantId])
+  @@map("usuario_tenant")
+}
+
+// Roles de sistema (tenant_id null) o propios de una clínica (a futuro).
+model Role {
+  id          String           @id @default(uuid()) @db.Uuid
+  tenantId    String?          @map("tenant_id") @db.Uuid
+  codigo      String
+  nombre      String
+  descripcion String?
+  tenant      Tenant?          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  permisos    RolePermission[]
+  usuarios    UsuarioTenant[]
+
+  @@unique([tenantId, codigo])
+  @@map("roles")
+}
+
+model Permission {
+  id          String           @id @default(uuid()) @db.Uuid
+  codigo      String           @unique
+  descripcion String
+  roles       RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String     @map("role_id") @db.Uuid
+  permissionId String     @map("permission_id") @db.Uuid
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
